@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,6 +20,51 @@ type GeoResponse struct {
 type LatLong struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+type WeatherData struct{}
+type WeatherResponse struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Timezone  string  `json:"timezone"`
+	Hourly    struct {
+		Time          []string  `json:"time"`
+		Temperature2m []float64 `json:"temperature_2m"`
+	} `json:"hourly"`
+}
+
+type WeatherDisplay struct {
+	City      string
+	Forecasts []Forecast
+}
+
+type Forecast struct {
+	Date        string
+	Temperature string
+}
+
+func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) {
+	var weatherResponse WeatherResponse
+	if err := json.Unmarshal([]byte(rawWeather), &weatherResponse); err != nil {
+		return WeatherDisplay{}, fmt.Errorf("error decoding weather response: %w", err)
+	}
+
+	var forecasts []Forecast
+	for i, t := range weatherResponse.Hourly.Time {
+		date, err := time.Parse("2006-01-02T15:04", t)
+		if err != nil {
+			return WeatherDisplay{}, err
+		}
+		forecast := Forecast{
+			Date:        date.Format("Mon 15:04"),
+			Temperature: fmt.Sprintf("%.1f°C", weatherResponse.Hourly.Temperature2m[i]),
+		}
+		forecasts = append(forecasts, forecast)
+	}
+	return WeatherDisplay{
+		City:      city,
+		Forecasts: forecasts,
+	}, nil
 }
 
 func getLatLong(city string) (*LatLong, error) {
@@ -60,6 +106,7 @@ func getWeather(latLong LatLong) (string, error) {
 
 func main() {
 	r := gin.Default()
+	r.LoadHTMLGlob("views/*")
 
 	r.GET("/weather", func(c *gin.Context) {
 		city := c.Query("city")
@@ -75,7 +122,17 @@ func main() {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"weather": weather})
+		// print out weather
+		fmt.Println(weather)
+
+		//////// NEW CODE STARTS HERE ////////
+		weatherDisplay, err := extractWeatherData(city, weather)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.HTML(http.StatusOK, "weather.html", weatherDisplay)
+		//////////////////////////////////////
 	})
 
 	r.Run()
