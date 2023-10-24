@@ -7,9 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
+	_ "github.com/lib/pq"
+
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
 )
 
 type GeoResponse struct {
@@ -67,7 +71,7 @@ func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) 
 	}, nil
 }
 
-func getLatLong(city string) (*LatLong, error) {
+func fetchLatLong(city string) (*LatLong, error) {
 	endpoint := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", url.QueryEscape(city))
 	resp, err := http.Get(endpoint)
 	if err != nil {
@@ -88,6 +92,26 @@ func getLatLong(city string) (*LatLong, error) {
 	return &response.Results[0], nil
 }
 
+func getLatLong(db *sqlx.DB, name string) (*LatLong, error) {
+	var latLong *LatLong
+	err := db.Get(&latLong, "SELECT lat, long FROM cities WHERE name = $1", name)
+	if err == nil {
+		return latLong, nil
+	}
+
+	latLong, err = fetchLatLong(name)
+	if err != nil {
+		return nil, err
+	}
+
+	err = insertCity(db, name, *latLong)
+	if err != nil {
+		return nil, err
+	}
+
+	return latLong, nil
+}
+
 func getWeather(latLong LatLong) (string, error) {
 	endpoint := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%.6f&longitude=%.6f&hourly=temperature_2m", latLong.Latitude, latLong.Longitude)
 	resp, err := http.Get(endpoint)
@@ -104,13 +128,20 @@ func getWeather(latLong LatLong) (string, error) {
 	return string(body), nil
 }
 
+func insertCity(db *sqlx.DB, name string, latLong LatLong) error {
+	_, err := db.Exec("INSERT INTO cities (name, lat, long) VALUES ($1, $2, $3)", name, latLong.Latitude, latLong.Longitude)
+	return err
+}
+
 func main() {
 	r := gin.Default()
 	r.LoadHTMLGlob("views/*")
 
+	db := sqlx.MustConnect("postgres", os.Getenv("DATABASE_URL"))
+
 	r.GET("/weather", func(c *gin.Context) {
 		city := c.Query("city")
-		latlong, err := getLatLong(city)
+		latlong, err := getLatLong(db, city)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
