@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
+
+	"github.com/gin-gonic/gin"
 )
 
 type GeoResponse struct {
@@ -58,15 +59,24 @@ func getWeather(latLong LatLong) (string, error) {
 }
 
 func main() {
-	latlong, err := getLatLong("London") // you know it will rain
-	if err != nil {
-		log.Fatalf("Failed to get latitude and longitude: %s", err)
-	}
-	fmt.Printf("Latitude: %f, Longitude: %f\n", latlong.Latitude, latlong.Longitude)
+	r := gin.Default()
 
-	weather, err := getWeather(*latlong)
-	if err != nil {
-		log.Fatalf("Failed to get weather: %s", err)
-	}
-	fmt.Printf("Weather: %s\n", weather)
+	r.GET("/weather", func(c *gin.Context) {
+		city := c.Query("city")
+		latlong, err := getLatLong(city)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		weather, err := getWeather(*latlong)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"weather": weather})
+	})
+
+	r.Run()
 }
